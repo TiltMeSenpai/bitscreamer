@@ -12,11 +12,11 @@ class UsbInterface(Elaboratable):
 
         self.bus = bus
 
-        self.input = USBStreamInEndpoint(
+        self.output = USBStreamOutEndpoint(
             endpoint_number=1,
             max_packet_size=MAX_PACKET_SIZE
         )
-        self.output = USBStreamOutEndpoint(
+        self.input = USBStreamInEndpoint(
             endpoint_number=1,
             max_packet_size=MAX_PACKET_SIZE
         )
@@ -62,16 +62,8 @@ class UsbInterface(Elaboratable):
 
         print(self.bus.clk)
 
-        stream_in = self.input.stream
-        stream_out = self.output.stream
-
         m.d.comb += [
             usb.connect.eq(1),
-            stream_in.payload           .eq(stream_out.payload),
-            stream_in.valid             .eq(stream_out.valid),
-            stream_in.first             .eq(stream_out.first),
-            stream_in.last              .eq(stream_out.last),
-            stream_out.ready            .eq(stream_in.ready),
         ]
 
 
@@ -94,13 +86,13 @@ class Packetizer(Elaboratable):
 
         with m.If(self.in_valid):
             with m.If(~self.rdy):
-                m.d.sync += self.out.eq(Cat(self.in_packet, self.out))
-            m.d.sync += self.ctr.eq(self.ctr - 1)
+                m.d.usb += self.out.eq(Cat(self.in_packet, self.out))
+            m.d.usb += self.ctr.eq(self.ctr - 1)
 
-        m.d.sync += self.rdy.eq(self.ctr == 0)
+        m.d.usb += self.rdy.eq(self.ctr == 0)
         with m.If(self.ctr == 0):
             with m.If(self.ack | self.rst):
-                m.d.sync += self.ctr.eq(self.ctr.reset)
+                m.d.usb += self.ctr.eq(self.ctr.reset)
 
         return m
 
@@ -266,6 +258,7 @@ class ECPIX5DomainGenerator(Elaboratable):
                 o_CLKOP=feedback,
                 o_CLKOS2=ClockSignal("usb_io"),
                 # o_CLKOS3=ClockSignal("usb"),
+                # This should be driven from the ULPI pny
 
                 # Synthesis attributes.
                 a_FREQUENCY_PIN_CLKI="25",
