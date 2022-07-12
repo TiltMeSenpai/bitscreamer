@@ -1,9 +1,12 @@
 from re import A
+from xml import dom
 from amaranth import *
 from luna.usb2 import USBDevice, USBStreamInEndpoint, USBStreamOutEndpoint
 
 from usb_protocol.emitters import DeviceDescriptorCollection
 from usb_protocol.types import DescriptorTypes
+
+from math import ceil
 
 MAX_PACKET_SIZE=512
 
@@ -26,10 +29,6 @@ class UsbInterface(Elaboratable):
 
 
         m.submodules.usb = usb = USBDevice(bus=self.bus, handle_clocking=True)
-
-        m.submodules.input = self.input
-
-        m.submodules.output = self.output
 
         descriptors = DeviceDescriptorCollection()
 
@@ -70,31 +69,44 @@ class UsbInterface(Elaboratable):
         return m
 
 class Packetizer(Elaboratable):
-    def __init__(self, packet_size=3):
-        self.in_packet = Signal(8)
-        self.in_valid = Signal()
-        self.rst = Signal()
+    def __init__(self, in_packet: Signal, valid: Signal, ack: Signal, out_packet_width = 24):
+        self.in_packet = in_packet
+        self.in_valid  = valid
+        self.in_ack    = ack
 
-        self.out = Signal(8 * packet_size)
-        self.rdy = Signal()
-        self.ack = Signal()
+        self.out_packet = Signal(out_packet_width)
+        self.out_valid  = Signal()
+        self.out_ack    = Signal()
 
-        self.ctr = Signal(range(packet_size), reset=packet_size)
-
+        self.n_bytes = ceil(out_packet_width / 8)
+        self.byte_ctr = Signal(range(self.n_bytes), reset=self.n_bytes)
+    
     def elaborate(self, platform):
         m = Module()
 
-        with m.If(self.in_valid):
-            with m.If(~self.rdy):
-                m.d.usb += self.out.eq(Cat(self.in_packet, self.out))
-            m.d.usb += self.ctr.eq(self.ctr - 1)
+        ready_latch = Signal()
 
-        m.d.usb += self.rdy.eq(self.ctr == 0)
-        with m.If(self.ctr == 0):
-            with m.If(self.ack | self.rst):
-                m.d.usb += self.ctr.eq(self.ctr.reset)
-
+        m.d.comb += [
+            self.out_valid.eq(self.byte_ctr == 0),
+            self.in_ack.eq(~self.out_valid & ready_latch)
+        ]
+        with m.FSM(domain="usb"):
+            with m.State("READ"):
+                m.d.usb += ready_latch.eq(self.byte_ctr != 0)
+                with m.If(self.in_valid & self.in_ack):
+                    m.d.usb += [
+                        self.out_packet.eq(Cat(self.in_packet, self.out_packet)),
+                        self.byte_ctr.eq(self.byte_ctr - 1),
+                    ]
+                with m.If(self.byte_ctr == 0):
+                    m.next = "WRITE"
+            with m.State("WRITE"):
+                with m.If(self.out_ack):
+                    m.next = "READ"
+                    m.d.usb += self.byte_ctr.eq(self.byte_ctr.reset)
+        
         return m
+
 
 # Borrowed from upstream Luna
 class ECPIX5DomainGenerator(Elaboratable):

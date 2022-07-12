@@ -1,21 +1,14 @@
+from more_itertools import flatten
 from nmigen import *
+from luna.gateware.stream.generator import ConstantStreamGenerator
 
-class SimStream(Elaboratable):
-    def __init__(self):
-        self.payload = Signal(8)
-        self.valid = Signal()
-        self.first = Signal()
-        self.ready = Signal()
-    def elaborate(self, platform):
-        m = Module()
-        ready = Signal()
-        m.d.sync += [
-            ready.eq(self.ready),
-            self.valid.eq(ready)
-        ]
+import itertools
 
-        with m.If(self.ready):
-            m.d.sync += self.payload.eq(self.payload + 1),
-
-
-        return m
+def make_sim_stream():
+    return ConstantStreamGenerator(
+        constant_data = list(itertools.chain.from_iterable([
+            [n, 0, 255-n] for n in range(255)
+        ])),
+        max_length_width=10,
+        domain="usb"
+    )
